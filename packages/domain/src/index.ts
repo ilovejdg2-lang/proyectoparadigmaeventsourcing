@@ -1,3 +1,4 @@
+export { canAppend, type AppendDecision } from './rules';
 export { replay, type TransactionState, type TransactionStatus } from './replay';
 
 export {
