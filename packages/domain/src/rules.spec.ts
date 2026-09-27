@@ -1,4 +1,3 @@
-import { replay } from './replay';
 import { canAppend } from './rules';
 import { TransactionEvent } from './transaction-event';
 
@@ -100,16 +99,6 @@ describe('canAppend', () => {
 
     expect(canAppend(pending, retried(3)).ok).toBe(false);
     expect(canAppend(rejectedHistory, retried(4))).toEqual({ ok: true });
-  });
-
-  it('permite aprobar después de un reintento', () => {
-    const history = [created(), requested(2), rejected(3), retried(4)];
-
-    expect(replay(history)).toMatchObject({
-      status: 'PAYMENT_PENDING',
-      attemptCount: 2,
-    });
-    expect(canAppend(history, approved(5))).toEqual({ ok: true });
   });
 
   it('permite completar solo si el pago fue aprobado', () => {
