@@ -1,3 +1,5 @@
+export { replay, type TransactionState, type TransactionStatus } from './replay';
+
 export {
   eventTypes,
   isTransactionEvent,
