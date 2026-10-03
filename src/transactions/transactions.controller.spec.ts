@@ -1,3 +1,6 @@
+import * as fs from 'fs';
+import * as os from 'os';
+import * as path from 'path';
 import { Test, TestingModule } from '@nestjs/testing';
 import { TransactionsController } from './transactions.controller';
 import { TransactionsService } from './transactions.service';
@@ -7,9 +10,11 @@ import { InMemoryEventStore } from './event-store/in-memory-event-store';
 describe('TransactionsController', () => {
   let controller: TransactionsController;
   let service: TransactionsService;
+  let tempDir: string;
 
   beforeEach(async () => {
-    process.env.EVENT_STORE_FILE = '';
+    tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tx-controller-'));
+    process.env.EVENT_STORE_FILE = path.join(tempDir, 'event-store.jsonl');
     const module: TestingModule = await Test.createTestingModule({
       controllers: [TransactionsController],
       providers: [
@@ -23,6 +28,10 @@ describe('TransactionsController', () => {
 
     controller = module.get<TransactionsController>(TransactionsController);
     service = module.get<TransactionsService>(TransactionsService);
+  });
+
+  afterEach(() => {
+    fs.rmSync(tempDir, { recursive: true, force: true });
   });
 
   it('debe estar definido', () => {

@@ -1,5 +1,11 @@
 export { canAppend, type AppendDecision } from './rules';
-export { replay, type TransactionState, type TransactionStatus } from './replay';
+export { parseEventLog, InvalidEventLogError } from './event-log';
+export {
+  assessNext,
+  replay,
+  type TransactionState,
+  type TransactionStatus,
+} from './replay';
 
 export {
   eventTypes,

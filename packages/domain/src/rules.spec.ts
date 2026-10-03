@@ -135,4 +135,23 @@ describe('canAppend', () => {
 
     expect(canAppend([created()], other).ok).toBe(false);
   });
+
+  it('rechaza completar justo después de crear', () => {
+    expect(canAppend([created()], completed(2)).ok).toBe(false);
+  });
+
+  it('rechaza un pago cuyo monto no coincide', () => {
+    const wrong = requested(2);
+    wrong.data = { ...wrong.data, amount: 9 };
+
+    expect(canAppend([created()], wrong).ok).toBe(false);
+  });
+
+  it('rechaza un reintento con attemptNumber incorrecto', () => {
+    const history = [created(), requested(2), rejected(3)];
+    const wrong = retried(4);
+    wrong.data = { ...wrong.data, attemptNumber: 7 };
+
+    expect(canAppend(history, wrong).ok).toBe(false);
+  });
 });

@@ -21,10 +21,106 @@ export interface TransactionState {
   completedAt?: string;
 }
 
+export type AppendDecision = { ok: true } | { ok: false; reason: string };
+
+function isAllowed(
+  status: TransactionStatus,
+  type: TransactionEvent['type'],
+): boolean {
+  switch (status) {
+    case 'CREATED':
+      return type === 'PaymentRequested';
+    case 'PAYMENT_PENDING':
+      return type === 'PaymentRejected' || type === 'PaymentApproved';
+    case 'PAYMENT_REJECTED':
+      return type === 'PaymentRetried';
+    case 'PAYMENT_APPROVED':
+      return type === 'TransactionCompleted';
+    case 'COMPLETED':
+      return false;
+  }
+}
+
+/**
+ * Única máquina de transiciones. La usan tanto canAppend como replay.
+ */
+export function assessNext(
+  state: TransactionState | null,
+  next: TransactionEvent,
+): AppendDecision {
+  if (!state) {
+    if (next.type !== 'TransactionCreated') {
+      return {
+        ok: false,
+        reason: 'La transacción debe empezar con TransactionCreated',
+      };
+    }
+
+    if (next.version !== 1) {
+      return { ok: false, reason: 'La primera versión debe ser 1' };
+    }
+
+    return { ok: true };
+  }
+
+  if (next.transactionId !== state.transactionId) {
+    return { ok: false, reason: 'El evento pertenece a otra transacción' };
+  }
+
+  if (next.version !== state.version + 1) {
+    return {
+      ok: false,
+      reason: `La versión debe ser ${state.version + 1}, pero se recibió ${next.version}`,
+    };
+  }
+
+  if (!isAllowed(state.status, next.type)) {
+    return {
+      ok: false,
+      reason: `${next.type} no es válido cuando el estado es ${state.status}`,
+    };
+  }
+
+  if (next.type === 'PaymentRequested' && next.data.amount !== state.amount) {
+    return {
+      ok: false,
+      reason: 'El monto del pago no coincide con el monto de la transacción',
+    };
+  }
+
+  if (
+    next.type === 'PaymentRetried' &&
+    next.data.attemptNumber !== state.attemptCount + 1
+  ) {
+    return {
+      ok: false,
+      reason: `El número de reintento debe ser ${state.attemptCount + 1}`,
+    };
+  }
+
+  return { ok: true };
+}
+
 function apply(
-  state: TransactionState,
-  event: Exclude<TransactionEvent, { type: 'TransactionCreated' }>,
+  state: TransactionState | null,
+  event: TransactionEvent,
 ): TransactionState {
+  if (event.type === 'TransactionCreated') {
+    return {
+      transactionId: event.transactionId,
+      status: 'CREATED',
+      amount: event.data.amount,
+      currency: event.data.currency,
+      customerId: event.data.customerId,
+      version: event.version,
+      attemptCount: 0,
+    };
+  }
+
+  if (!state) {
+    throw new Error('La transacción debe empezar con TransactionCreated');
+  }
+
   switch (event.type) {
     case 'PaymentRequested':
       return {
@@ -70,31 +166,13 @@ export function replay(events: TransactionEvent[]): TransactionState | null {
     return null;
   }
 
-  const [first, ...rest] = events;
+  let state: TransactionState | null = null;
 
-  if (first.type !== 'TransactionCreated') {
-    throw new Error('El historial debe empezar con TransactionCreated');
-  }
-
-  let state: TransactionState = {
-    transactionId: first.transactionId,
-    status: 'CREATED',
-    amount: first.data.amount,
-    currency: first.data.currency,
-    customerId: first.data.customerId,
-    version: first.version,
-    attemptCount: 0,
-  };
-
-  for (const event of rest) {
-    if (event.transactionId !== state.transactionId) {
-      throw new Error('Los eventos pertenecen a otra transacción');
+  for (const event of events) {
+    const decision = assessNext(state, event);
+    if (!decision.ok) {
+      throw new Error(decision.reason);
     }
-
-    if (event.type === 'TransactionCreated') {
-      throw new Error('TransactionCreated solo puede ser el primer evento');
-    }
-
     state = apply(state, event);
   }
 
