@@ -1,16 +1,22 @@
+import * as fs from 'fs';
+import * as os from 'os';
+import * as path from 'path';
 import { Test, TestingModule } from '@nestjs/testing';
 import { TransactionsService } from './transactions.service';
 import { EVENT_STORE_TOKEN } from './event-store/event-store.interface';
 import { InMemoryEventStore } from './event-store/in-memory-event-store';
 import { TransactionNotFoundException } from './exceptions/transaction-not-found.exception';
 import { InvalidTransactionTransitionException } from './exceptions/invalid-transition.exception';
+import { TransactionConflictException } from './exceptions/transaction-conflict.exception';
 
 describe('TransactionsService', () => {
   let service: TransactionsService;
   let eventStore: InMemoryEventStore;
+  let tempDir: string;
 
   beforeEach(async () => {
-    process.env.EVENT_STORE_FILE = '';
+    tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tx-service-'));
+    process.env.EVENT_STORE_FILE = path.join(tempDir, 'event-store.jsonl');
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         TransactionsService,
@@ -24,6 +30,10 @@ describe('TransactionsService', () => {
     service = module.get<TransactionsService>(TransactionsService);
     eventStore = module.get<InMemoryEventStore>(EVENT_STORE_TOKEN);
     eventStore.clear();
+  });
+
+  afterEach(() => {
+    fs.rmSync(tempDir, { recursive: true, force: true });
   });
 
   it('debe estar definido', () => {
@@ -159,6 +169,61 @@ describe('TransactionsService', () => {
       await expect(
         service.completeTransaction(txnId, {}),
       ).rejects.toThrow(InvalidTransactionTransitionException);
+    });
+
+    it('rechaza un monto distinto y no agrega el evento', async () => {
+      const created = await service.createTransaction({
+        amount: 80,
+        currency: 'CRC',
+        customerId: 'c-amount',
+      });
+      const txnId = created.event.transactionId;
+
+      await expect(
+        service.requestPayment(txnId, { amount: 10 }),
+      ).rejects.toThrow(InvalidTransactionTransitionException);
+
+      const history = await service.getEvents(txnId);
+      expect(history).toHaveLength(1);
+    });
+
+    it('calcula el reintento y rechaza un attemptNumber arbitrario', async () => {
+      const created = await service.createTransaction({
+        amount: 80,
+        currency: 'CRC',
+        customerId: 'c-retry',
+      });
+      const txnId = created.event.transactionId;
+      await service.requestPayment(txnId, {});
+      await service.rejectPayment(txnId, { reason: 'timeout' });
+
+      await expect(
+        service.retryPayment(txnId, { attemptNumber: 9 }),
+      ).rejects.toThrow(/debe ser 2/);
+
+      const retry = await service.retryPayment(txnId, {});
+      expect(retry.event.type).toBe('PaymentRetried');
+      if (retry.event.type === 'PaymentRetried') {
+        expect(retry.event.data.attemptNumber).toBe(2);
+      }
+      expect(retry.state.attemptCount).toBe(2);
+    });
+
+    it('acepta expectedVersion correcto y rechaza uno incorrecto', async () => {
+      const created = await service.createTransaction({
+        amount: 80,
+        currency: 'CRC',
+        customerId: 'c-version',
+      });
+      const txnId = created.event.transactionId;
+
+      await expect(
+        service.requestPayment(txnId, { expectedVersion: 4 }),
+      ).rejects.toThrow(TransactionConflictException);
+
+      const payment = await service.requestPayment(txnId, { expectedVersion: 1 });
+      expect(payment.event.version).toBe(2);
+      expect(payment.state.status).toBe('PAYMENT_PENDING');
     });
   });
 });

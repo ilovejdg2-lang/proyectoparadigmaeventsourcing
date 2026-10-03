@@ -1,16 +1,30 @@
+import * as fs from 'fs';
+import * as os from 'os';
+import * as path from 'path';
 import { InMemoryEventStore } from './in-memory-event-store';
-import { TransactionCreated, PaymentRequested, PaymentApproved } from '@eventsourcing/domain';
+import {
+  InvalidEventLogError,
+  PaymentApproved,
+  PaymentRequested,
+  replay,
+  TransactionCreated,
+} from '@eventsourcing/domain';
 import { TransactionConflictException } from '../exceptions/transaction-conflict.exception';
 import { InvalidTransactionTransitionException } from '../exceptions/invalid-transition.exception';
 
 describe('InMemoryEventStore', () => {
   let store: InMemoryEventStore;
+  let tempDir: string;
 
   beforeEach(() => {
-    // Usamos una ruta vacía o temporal para no depender de archivos en pruebas unitarias
-    process.env.EVENT_STORE_FILE = '';
+    tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tx-event-store-'));
+    process.env.EVENT_STORE_FILE = path.join(tempDir, 'event-store.jsonl');
     store = new InMemoryEventStore();
     store.clear();
+  });
+
+  afterEach(() => {
+    fs.rmSync(tempDir, { recursive: true, force: true });
   });
 
   const baseCreatedEvent: TransactionCreated = {
@@ -155,5 +169,113 @@ describe('InMemoryEventStore', () => {
 
     const txIds = await store.getTransactionIds();
     expect(txIds).toContain('txn-100');
+
+    const external = await store.getEventsByTransactionId('txn-100');
+    external[0].data.amount = 1;
+    external.push({ ...external[0] });
+    const stored = await store.getEventsByTransactionId('txn-100');
+    expect(stored).toHaveLength(2);
+    expect(stored[0].data.amount).toBe(5000);
+  });
+
+  it('reconstruye el mismo estado al reiniciar desde el JSONL', async () => {
+    await store.append(baseCreatedEvent);
+    const paymentReq: PaymentRequested = {
+      eventId: 'evt-2',
+      transactionId: 'txn-100',
+      type: 'PaymentRequested',
+      version: 2,
+      occurredAt: baseCreatedEvent.occurredAt,
+      data: { paymentId: 'pay-1', amount: 5000 },
+    };
+    await store.append(paymentReq, 1);
+
+    const before = replay(await store.getEventsByTransactionId('txn-100'));
+    const restarted = new InMemoryEventStore();
+    restarted.onModuleInit();
+    const after = replay(await restarted.getEventsByTransactionId('txn-100'));
+
+    expect(after).toEqual(before);
+    expect(after).toMatchObject({
+      status: 'PAYMENT_PENDING',
+      version: 2,
+      amount: 5000,
+    });
+  });
+
+  it('no modifica la memoria si falla la escritura del archivo', async () => {
+    const blockedRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'tx-store-ro-'));
+    const blockedPath = path.join(blockedRoot, 'not-a-file');
+    fs.mkdirSync(blockedPath);
+    const previous = process.env.EVENT_STORE_FILE;
+    process.env.EVENT_STORE_FILE = blockedPath;
+
+    try {
+      const failingStore = new InMemoryEventStore();
+      await expect(failingStore.append(baseCreatedEvent)).rejects.toThrow(
+        /persistir/,
+      );
+      await expect(failingStore.getAllEvents()).resolves.toEqual([]);
+      await expect(
+        failingStore.getEventsByTransactionId('txn-100'),
+      ).resolves.toEqual([]);
+    } finally {
+      process.env.EVENT_STORE_FILE = previous;
+      fs.rmSync(blockedRoot, { recursive: true, force: true });
+    }
+  });
+
+  it('carga un JSONL válido', () => {
+    const file = process.env.EVENT_STORE_FILE as string;
+    fs.writeFileSync(
+      file,
+      `${JSON.stringify(baseCreatedEvent)}\n`,
+      'utf-8',
+    );
+
+    store.onModuleInit();
+
+    return expect(store.getEventsByTransactionId('txn-100')).resolves.toEqual([
+      baseCreatedEvent,
+    ]);
+  });
+
+  it('no arranca con un stream parcial si hay una línea corrupta intermedia', async () => {
+    const file = process.env.EVENT_STORE_FILE as string;
+    const second: PaymentRequested = {
+      eventId: 'evt-2',
+      transactionId: 'txn-100',
+      type: 'PaymentRequested',
+      version: 2,
+      occurredAt: baseCreatedEvent.occurredAt,
+      data: { paymentId: 'pay-1', amount: 5000 },
+    };
+    fs.writeFileSync(
+      file,
+      [JSON.stringify(baseCreatedEvent), '{"roto":', JSON.stringify(second)].join(
+        '\n',
+      ),
+      'utf-8',
+    );
+
+    expect(() => store.onModuleInit()).toThrow(InvalidEventLogError);
+    await expect(store.getAllEvents()).resolves.toEqual([]);
+    await expect(store.getEventsByTransactionId('txn-100')).resolves.toEqual(
+      [],
+    );
+  });
+
+  it('ignora solo una última línea incompleta al cargar', async () => {
+    const file = process.env.EVENT_STORE_FILE as string;
+    fs.writeFileSync(
+      file,
+      `${JSON.stringify(baseCreatedEvent)}\n{"eventId":"trunc"`,
+      'utf-8',
+    );
+
+    store.onModuleInit();
+
+    const events = await store.getEventsByTransactionId('txn-100');
+    expect(events).toEqual([baseCreatedEvent]);
   });
 });

@@ -1,0 +1,10 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "baseUrl": ".",
+    "paths": {
+      "@eventsourcing/domain": ["../packages/domain/src/index.ts"]
+    }
+  },
+  "include": ["src/**/*.ts"]
+}

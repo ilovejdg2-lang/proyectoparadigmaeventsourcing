@@ -1,0 +1,245 @@
+<!DOCTYPE html>
+<html lang="es">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Historial auditable</title>
+    <style>
+      :root {
+        color-scheme: light;
+        font-family: "Segoe UI", system-ui, sans-serif;
+        background: #f4f6f8;
+        color: #1c2430;
+      }
+      body {
+        margin: 0;
+        padding: 32px 20px 48px;
+      }
+      main {
+        max-width: 980px;
+        margin: 0 auto;
+      }
+      h1 {
+        margin: 0 0 8px;
+        font-size: 1.6rem;
+      }
+      p.lead {
+        margin: 0 0 24px;
+        color: #526072;
+      }
+      form {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 12px;
+        align-items: end;
+        margin-bottom: 16px;
+      }
+      label {
+        display: flex;
+        flex-direction: column;
+        gap: 6px;
+        font-size: 0.9rem;
+        flex: 1 1 240px;
+      }
+      input,
+      select,
+      button {
+        font: inherit;
+        padding: 8px 10px;
+        border: 1px solid #c5ced8;
+        border-radius: 6px;
+        background: white;
+      }
+      button {
+        background: #16324f;
+        color: white;
+        border: 0;
+        cursor: pointer;
+      }
+      button.secondary {
+        background: white;
+        color: #16324f;
+        border: 1px solid #16324f;
+      }
+      .error {
+        min-height: 1.2em;
+        margin: 0 0 16px;
+        color: #9b1c1c;
+      }
+      .grid {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 16px;
+      }
+      section {
+        background: white;
+        border: 1px solid #e1e6ec;
+        border-radius: 8px;
+        padding: 16px;
+        min-height: 180px;
+      }
+      h2 {
+        margin: 0 0 12px;
+        font-size: 1.05rem;
+      }
+      .row,
+      .event {
+        padding: 6px 0;
+        border-bottom: 1px solid #eef2f5;
+        white-space: pre-wrap;
+        word-break: break-word;
+      }
+      .empty {
+        color: #6b7785;
+      }
+      @media (max-width: 800px) {
+        .grid {
+          grid-template-columns: 1fr;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <h1>Historial auditable de transacciones</h1>
+      <p class="lead">
+        El estado se reconstruye solo con los eventos del event store.
+      </p>
+      <form id="lookup">
+        <label>
+          Transacción
+          <select id="known"></select>
+        </label>
+        <label>
+          O escribe un transactionId
+          <input id="transactionId" name="transactionId" autocomplete="off" />
+        </label>
+        <button type="submit">Consultar</button>
+        <button type="button" class="secondary" id="refresh">Actualizar lista</button>
+      </form>
+      <p class="error" id="error"></p>
+      <div class="grid">
+        <section>
+          <h2>Estado actual reconstruido</h2>
+          <div id="state"></div>
+        </section>
+        <section>
+          <h2>Historial cronológico</h2>
+          <div id="events"></div>
+        </section>
+      </div>
+    </main>
+    <script>
+      const known = document.querySelector('#known');
+      const transactionId = document.querySelector('#transactionId');
+      const error = document.querySelector('#error');
+      const statePanel = document.querySelector('#state');
+      const eventsPanel = document.querySelector('#events');
+
+      function clearPanels() {
+        statePanel.replaceChildren();
+        eventsPanel.replaceChildren();
+      }
+
+      function showEmpty(panel, text) {
+        const note = document.createElement('p');
+        note.className = 'empty';
+        note.textContent = text;
+        panel.replaceChildren(note);
+      }
+
+      function showError(message) {
+        error.textContent = message;
+        clearPanels();
+        showEmpty(statePanel, 'Sin estado para mostrar.');
+        showEmpty(eventsPanel, 'Sin historial para mostrar.');
+      }
+
+      function renderState(state) {
+        statePanel.replaceChildren();
+        Object.entries(state).forEach(([key, value]) => {
+          const row = document.createElement('div');
+          row.className = 'row';
+          row.textContent = key + ': ' + (value === undefined || value === null ? '' : value);
+          statePanel.appendChild(row);
+        });
+      }
+
+      function renderEvents(events) {
+        eventsPanel.replaceChildren();
+        events.forEach((event) => {
+          const block = document.createElement('div');
+          block.className = 'event';
+          block.textContent =
+            'v' + event.version + '  ' + event.type + '\n' + JSON.stringify(event.data);
+          eventsPanel.appendChild(block);
+        });
+      }
+
+      async function loadList() {
+        error.textContent = '';
+        const response = await fetch('/history/transactions');
+        const body = await response.json();
+        if (!response.ok) {
+          known.replaceChildren();
+          showError(body.message || 'No se pudo leer el event store');
+          return;
+        }
+        const current = transactionId.value;
+        known.replaceChildren();
+        const placeholder = document.createElement('option');
+        placeholder.value = '';
+        placeholder.textContent = 'Selecciona una transacción';
+        known.appendChild(placeholder);
+        body.forEach((item) => {
+          const option = document.createElement('option');
+          option.value = item.transactionId;
+          option.textContent = item.transactionId + ' · ' + item.status;
+          known.appendChild(option);
+        });
+        if (current) {
+          transactionId.value = current;
+        }
+      }
+
+      async function consult(id) {
+        error.textContent = '';
+        clearPanels();
+        const encoded = encodeURIComponent(id);
+        const [stateResponse, eventsResponse] = await Promise.all([
+          fetch('/history/transactions/' + encoded),
+          fetch('/history/transactions/' + encoded + '/events'),
+        ]);
+        if (!stateResponse.ok || !eventsResponse.ok) {
+          const body = await stateResponse.json().catch(() => ({}));
+          showError(body.message || 'No se pudo consultar la transacción');
+          return;
+        }
+        renderState(await stateResponse.json());
+        renderEvents(await eventsResponse.json());
+      }
+
+      known.addEventListener('change', () => {
+        if (known.value) {
+          transactionId.value = known.value;
+        }
+      });
+
+      document.querySelector('#lookup').addEventListener('submit', (event) => {
+        event.preventDefault();
+        const id = transactionId.value.trim();
+        if (!id) {
+          showError('Indica un transactionId');
+          return;
+        }
+        consult(id);
+      });
+
+      document.querySelector('#refresh').addEventListener('click', () => {
+        loadList();
+      });
+
+      loadList();
+    </script>
+  </body>
+</html>

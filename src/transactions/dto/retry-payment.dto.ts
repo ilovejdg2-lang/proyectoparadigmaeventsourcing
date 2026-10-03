@@ -3,7 +3,8 @@ import { IsInt, IsOptional, Min } from 'class-validator';
 
 export class RetryPaymentDto {
   @ApiPropertyOptional({
-    description: 'Número del intento de reintento (calculado automáticamente si no se envía)',
+    description:
+      'El backend calcula el número de intento desde el historial. Si se envía y no coincide, el comando se rechaza.',
     example: 2,
   })
   @IsOptional()
