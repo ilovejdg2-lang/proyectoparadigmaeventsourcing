@@ -22,6 +22,7 @@ import { RetryPaymentDto } from './dto/retry-payment.dto';
 import { ApprovePaymentDto } from './dto/approve-payment.dto';
 import { CompleteTransactionDto } from './dto/complete-transaction.dto';
 import { TransactionNotFoundException } from './exceptions/transaction-not-found.exception';
+import { InvalidTransactionTransitionException } from './exceptions/invalid-transition.exception';
 
 export interface CommandResult {
   message: string;
@@ -72,6 +73,12 @@ export class TransactionsService {
     const events = await this.getEventsOrThrow(transactionId);
     const currentState = replay(events)!;
 
+    if (dto.amount !== undefined && dto.amount !== currentState.amount) {
+      throw new InvalidTransactionTransitionException(
+        'El monto del pago no coincide con el monto de la transacción',
+      );
+    }
+
     const event: PaymentRequested = {
       eventId: crypto.randomUUID(),
       transactionId,
@@ -80,7 +87,7 @@ export class TransactionsService {
       occurredAt: new Date().toISOString(),
       data: {
         paymentId: dto.paymentId?.trim() || `pay-${crypto.randomUUID().slice(0, 8)}`,
-        amount: dto.amount ?? currentState.amount,
+        amount: currentState.amount,
       },
     };
 
@@ -130,6 +137,16 @@ export class TransactionsService {
   ): Promise<CommandResult> {
     const events = await this.getEventsOrThrow(transactionId);
     const currentState = replay(events)!;
+    const attemptNumber = currentState.attemptCount + 1;
+
+    if (
+      dto.attemptNumber !== undefined &&
+      dto.attemptNumber !== attemptNumber
+    ) {
+      throw new InvalidTransactionTransitionException(
+        `El número de reintento debe ser ${attemptNumber}`,
+      );
+    }
 
     const event: PaymentRetried = {
       eventId: crypto.randomUUID(),
@@ -138,7 +155,7 @@ export class TransactionsService {
       version: currentState.version + 1,
       occurredAt: new Date().toISOString(),
       data: {
-        attemptNumber: dto.attemptNumber ?? currentState.attemptCount + 1,
+        attemptNumber,
       },
     };
 

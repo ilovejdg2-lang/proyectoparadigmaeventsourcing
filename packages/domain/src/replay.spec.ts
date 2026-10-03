@@ -124,4 +124,64 @@ describe('replay', () => {
       version: 3,
     });
   });
+
+  it('rechaza un primer evento que no es TransactionCreated', () => {
+    expect(() => replay([requested(1)])).toThrow(/TransactionCreated/);
+  });
+
+  it('rechaza un primer evento cuya versión no es 1', () => {
+    expect(() => replay([created(2)])).toThrow(/primera versión/);
+  });
+
+  it('rechaza una versión faltante', () => {
+    expect(() => replay([created(), requested(3)])).toThrow(
+      /debe ser 2, pero se recibió 3/,
+    );
+  });
+
+  it('rechaza una versión duplicada', () => {
+    expect(() => replay([created(), requested(1)])).toThrow(
+      /debe ser 2, pero se recibió 1/,
+    );
+  });
+
+  it('rechaza un evento ilegal para el estado actual', () => {
+    expect(() => replay([created(), approved(2)])).toThrow(
+      /PaymentApproved no es válido cuando el estado es CREATED/,
+    );
+  });
+
+  it('rechaza un evento de otra transacción', () => {
+    const other = { ...requested(2), transactionId: 'txn-2' };
+
+    expect(() => replay([created(), other])).toThrow(/otra transacción/);
+  });
+
+  it('rechaza TransactionCreated seguido de TransactionCompleted', () => {
+    expect(() => replay([created(), completed(2)])).toThrow(
+      /TransactionCompleted no es válido cuando el estado es CREATED/,
+    );
+  });
+
+  it('rechaza un historial fuera de orden', () => {
+    expect(() => replay([requested(2), created(1)])).toThrow(
+      /TransactionCreated/,
+    );
+  });
+
+  it('rechaza un monto de pago distinto al de la transacción', () => {
+    const wrongAmount = requested(2);
+    wrongAmount.data = { ...wrongAmount.data, amount: 1 };
+
+    expect(() => replay([created(), wrongAmount])).toThrow(/monto/);
+  });
+
+  it('rechaza un attemptNumber que no es el siguiente reintento', () => {
+    const wrongAttempt = retried(4);
+    wrongAttempt.data = { ...wrongAttempt.data, attemptNumber: 9 };
+
+    expect(() =>
+      replay([created(), requested(2), rejected(3), wrongAttempt]),
+    ).toThrow(/número de reintento debe ser 2/);
+  });
 });

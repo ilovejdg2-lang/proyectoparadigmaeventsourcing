@@ -11,7 +11,8 @@ export class RequestPaymentDto {
   paymentId?: string;
 
   @ApiPropertyOptional({
-    description: 'Monto solicitado para el pago (por defecto el monto original de la transacción)',
+    description:
+      'Debe coincidir con el monto de TransactionCreated. Si se omite, el backend usa ese monto.',
     example: 15000,
   })
   @IsOptional()

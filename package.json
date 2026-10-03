@@ -16,6 +16,9 @@
     "start:debug": "nest start --debug --watch",
     "start:prod": "node dist/src/main.js",
     "lint": "eslint \"{src,apps,libs,test}/**/*.ts\" --fix",
+    "build:history": "npm --workspace=@eventsourcing/domain run build && tsc -p history/tsconfig.build.json && node scripts/copy-history-assets.js",
+    "start:history": "node dist-history/main.js",
+    "start:history:dev": "npm --workspace=@eventsourcing/domain run build && ts-node --project history/tsconfig.json history/src/main.ts",
     "test": "jest",
     "test:watch": "jest --watch",
     "test:cov": "jest --coverage",
@@ -57,23 +60,5 @@
     "tsconfig-paths": "^4.2.0",
     "typescript": "^5.7.3",
     "typescript-eslint": "^8.20.0"
-  },
-  "jest": {
-    "moduleFileExtensions": [
-      "js",
-      "json",
-      "ts"
-    ],
-    "rootDir": "src",
-    "testRegex": ".*\\.spec\\.ts$",
-    "transform": {
-      "^.+\\.(t|j)s$": "ts-jest"
-    },
-    "collectCoverageFrom": [
-      "**/*.(t|j)s"
-    ],
-    "coverageDirectory": "../coverage",
-    "testEnvironment": "node",
-    "passWithNoTests": true
   }
 }
