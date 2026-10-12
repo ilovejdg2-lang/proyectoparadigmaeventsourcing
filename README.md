@@ -167,6 +167,58 @@ docker run --rm -p 3001:3001 -v "${PWD}/data/event-store.jsonl:/data/event-store
 
 La pantalla queda en [http://localhost:3001/](http://localhost:3001/). El `:ro` es la promesa de esta etapa: este proceso lee el historial y no lo altera.
 
+## Etapa 4. Simular el escenario
+
+Recorrer los comandos uno por uno en Swagger sirve para entender el flujo, pero para una demo hace falta tener datos listos y una forma rápida de mostrar que todo cuadra. Esta etapa trae dos herramientas: un script que llena el event store con casos variados y una colección de Postman para recorrerlos paso a paso.
+
+### El script de simulación
+
+Con las dos APIs encendidas (la Transaction API en el 3000 y la History API en el 3001), abre una tercera terminal en la misma carpeta y ejecuta:
+
+```powershell
+npm run simular
+```
+
+El script crea seis transacciones, cada una en un punto distinto de su vida:
+
+| Escenario | Qué hace | Cómo termina |
+| --- | --- | --- |
+| Camino feliz | crear, cobrar, aprobar, cerrar | `COMPLETED`, versión 4, 1 intento |
+| Rechazo y reintento | crear, cobrar, rechazar, reintentar, aprobar, cerrar | `COMPLETED`, versión 6, 2 intentos |
+| Rechazada dos veces | crear, cobrar, rechazar, reintentar, rechazar | `PAYMENT_REJECTED`, versión 5, 2 intentos |
+| Pago pendiente | crear, cobrar | `PAYMENT_PENDING`, versión 2 |
+| Recién creada | crear | `CREATED`, versión 1 |
+| Errores esperados | crear y luego cinco comandos inválidos | `CREATED`, versión 1: ningún error escribió |
+
+Los cinco comandos inválidos son: cobrar un monto distinto (400), usar una versión vieja (409), cerrar sin haber cobrado (400), crear otra vez el mismo id (409) y operar sobre un id que no existe (404).
+
+Cada línea que imprime el script dice qué se pidió, qué respondió la API y en qué versión y estado quedó la transacción. Al final le pregunta a la History API por cada transacción y muestra una tabla con el estado reconstruido y la lista de eventos. La columna `ok` dice `sí` cuando el estado que reconstruye la History API, solo leyendo los eventos, es el mismo al que llegó la Transaction API. Esa tabla es la evidencia de que el Event Sourcing funciona: el estado no se guardó en ningún lado, se volvió a calcular.
+
+Los ids llevan un sufijo distinto en cada corrida (por ejemplo `demo-feliz-mgx1k2`), así que puedes ejecutar el script varias veces sin chocar con datos anteriores.
+
+Para correrlo contra el ambiente desplegado, indica las direcciones:
+
+```powershell
+$env:API_URL = "https://mi-servidor:3000"
+$env:HISTORY_URL = "https://mi-servidor:3001"
+npm run simular
+```
+
+Si algo no responde como se esperaba, el script lo lista al final y termina con error.
+
+### La colección de Postman
+
+En `postman/event-sourcing.postman_collection.json` está la misma historia en forma de requests. Impórtala en Postman (**Import** y eliges el archivo). Tiene cuatro carpetas:
+
+1. **Camino feliz**: crea, cobra, aprueba y cierra; luego consulta en la History API el estado y los eventos.
+2. **Rechazo y reintento**: el recorrido largo, con el motivo del rechazo y el intento 2.
+3. **Errores esperados**: los cinco comandos inválidos, y una consulta final que comprueba que el historial sigue con un solo evento.
+4. **Consultas**: el listado de las dos APIs.
+
+No hace falta copiar ids ni versiones. Cada request guarda el `transactionId` y la versión que devolvió, y el siguiente los usa. Cada uno trae pruebas, así que en la pestaña **Test Results** se ve en verde lo que tenía que pasar. Para recorrer una carpeta completa de una vez, usa **Run folder**.
+
+Las direcciones están en las variables de la colección, `apiUrl` y `historyUrl`. Cámbialas para probar el ambiente desplegado.
+
 ## Cómo comprobar que todo sigue en pie
 
 ```powershell
@@ -177,4 +229,4 @@ Ejecuta las pruebas del dominio, de la Transaction API y de la History API, incl
 
 ## Qué falta
 
-La etapa 4 todavía no está: datos de prueba listos, un escenario feliz, uno con rechazo y una colección de Postman. La etapa 5 tampoco: un Docker Compose que levante las dos APIs juntas, los scripts de despliegue y el guion de la demo. Hoy se encienden por separado, con los comandos de arriba.
+La etapa 5 todavía no está: un Docker Compose que levante las dos APIs juntas, los scripts de despliegue y el guion de la demo. Hoy se encienden por separado, con los comandos de arriba.

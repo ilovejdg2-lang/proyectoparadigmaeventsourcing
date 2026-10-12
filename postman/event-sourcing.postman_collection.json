@@ -1,0 +1,454 @@
+{
+  "info": {
+    "name": "Event Sourcing - Historial auditable de transacciones",
+    "description": "Escenarios de la etapa 4. Ejecuta las carpetas en orden con el Collection Runner o request por request. La Transaction API escribe eventos; la History API reconstruye el estado con replay. Cambia apiUrl e historyUrl para probar el ambiente desplegado.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    { "key": "apiUrl", "value": "http://localhost:3000" },
+    { "key": "historyUrl", "value": "http://localhost:3001" },
+    { "key": "felizId", "value": "" },
+    { "key": "felizVersion", "value": "" },
+    { "key": "reintentoId", "value": "" },
+    { "key": "reintentoVersion", "value": "" },
+    { "key": "erroresId", "value": "" }
+  ],
+  "item": [
+    {
+      "name": "1. Camino feliz",
+      "item": [
+        {
+          "name": "Crear transacción",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": { "type": "text/javascript", "exec": ["pm.collectionVariables.set('felizId', 'pm-feliz-' + Date.now());"] }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('201 Created', () => pm.response.to.have.status(201));",
+                  "const body = pm.response.json();",
+                  "pm.test('Evento TransactionCreated v1', () => { pm.expect(body.event.type).to.eql('TransactionCreated'); pm.expect(body.state.version).to.eql(1); });",
+                  "pm.test('Estado CREATED', () => pm.expect(body.state.status).to.eql('CREATED'));",
+                  "pm.collectionVariables.set('felizVersion', body.state.version);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": { "mode": "raw", "raw": "{\n  \"transactionId\": \"{{felizId}}\",\n  \"amount\": 15000,\n  \"currency\": \"CRC\",\n  \"customerId\": \"cliente-ana\"\n}" },
+            "url": "{{apiUrl}}/transactions"
+          }
+        },
+        {
+          "name": "Solicitar pago",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 OK', () => pm.response.to.have.status(200));",
+                  "const body = pm.response.json();",
+                  "pm.test('Estado PAYMENT_PENDING, intento 1', () => { pm.expect(body.state.status).to.eql('PAYMENT_PENDING'); pm.expect(body.state.attemptCount).to.eql(1); });",
+                  "pm.collectionVariables.set('felizVersion', body.state.version);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": { "mode": "raw", "raw": "{\n  \"expectedVersion\": {{felizVersion}}\n}" },
+            "url": "{{apiUrl}}/transactions/{{felizId}}/request-payment"
+          }
+        },
+        {
+          "name": "Aprobar pago",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 OK', () => pm.response.to.have.status(200));",
+                  "const body = pm.response.json();",
+                  "pm.test('Estado PAYMENT_APPROVED', () => pm.expect(body.state.status).to.eql('PAYMENT_APPROVED'));",
+                  "pm.collectionVariables.set('felizVersion', body.state.version);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": { "mode": "raw", "raw": "{\n  \"approvalCode\": \"AUTH-100200\",\n  \"expectedVersion\": {{felizVersion}}\n}" },
+            "url": "{{apiUrl}}/transactions/{{felizId}}/approve-payment"
+          }
+        },
+        {
+          "name": "Completar transacción",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 OK', () => pm.response.to.have.status(200));",
+                  "const body = pm.response.json();",
+                  "pm.test('Estado COMPLETED en versión 4', () => { pm.expect(body.state.status).to.eql('COMPLETED'); pm.expect(body.state.version).to.eql(4); });",
+                  "pm.collectionVariables.set('felizVersion', body.state.version);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": { "mode": "raw", "raw": "{\n  \"expectedVersion\": {{felizVersion}}\n}" },
+            "url": "{{apiUrl}}/transactions/{{felizId}}/complete"
+          }
+        },
+        {
+          "name": "History API: estado reconstruido",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 OK', () => pm.response.to.have.status(200));",
+                  "const state = pm.response.json();",
+                  "pm.test('Replay da COMPLETED v4 con 1 intento', () => { pm.expect(state.status).to.eql('COMPLETED'); pm.expect(state.version).to.eql(4); pm.expect(state.attemptCount).to.eql(1); pm.expect(state.approvalCode).to.eql('AUTH-100200'); });"
+                ]
+              }
+            }
+          ],
+          "request": { "method": "GET", "url": "{{historyUrl}}/history/transactions/{{felizId}}" }
+        },
+        {
+          "name": "History API: historial de eventos",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 OK', () => pm.response.to.have.status(200));",
+                  "const types = pm.response.json().map((e) => e.type);",
+                  "pm.test('4 eventos en orden', () => pm.expect(types).to.eql(['TransactionCreated', 'PaymentRequested', 'PaymentApproved', 'TransactionCompleted']));"
+                ]
+              }
+            }
+          ],
+          "request": { "method": "GET", "url": "{{historyUrl}}/history/transactions/{{felizId}}/events" }
+        }
+      ]
+    },
+    {
+      "name": "2. Rechazo y reintento",
+      "item": [
+        {
+          "name": "Crear transacción",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": { "type": "text/javascript", "exec": ["pm.collectionVariables.set('reintentoId', 'pm-reintento-' + Date.now());"] }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('201 Created', () => pm.response.to.have.status(201));",
+                  "const body = pm.response.json();",
+                  "pm.collectionVariables.set('reintentoVersion', body.state.version);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": { "mode": "raw", "raw": "{\n  \"transactionId\": \"{{reintentoId}}\",\n  \"amount\": 25000,\n  \"currency\": \"CRC\",\n  \"customerId\": \"cliente-luis\"\n}" },
+            "url": "{{apiUrl}}/transactions"
+          }
+        },
+        {
+          "name": "Solicitar pago (intento 1)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 OK', () => pm.response.to.have.status(200));",
+                  "const body = pm.response.json();",
+                  "pm.test('Estado PAYMENT_PENDING', () => pm.expect(body.state.status).to.eql('PAYMENT_PENDING'));",
+                  "pm.collectionVariables.set('reintentoVersion', body.state.version);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": { "mode": "raw", "raw": "{\n  \"expectedVersion\": {{reintentoVersion}}\n}" },
+            "url": "{{apiUrl}}/transactions/{{reintentoId}}/request-payment"
+          }
+        },
+        {
+          "name": "Rechazar pago",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 OK', () => pm.response.to.have.status(200));",
+                  "const body = pm.response.json();",
+                  "pm.test('Estado PAYMENT_REJECTED con motivo', () => { pm.expect(body.state.status).to.eql('PAYMENT_REJECTED'); pm.expect(body.state.lastRejectionReason).to.eql('Fondos insuficientes'); });",
+                  "pm.collectionVariables.set('reintentoVersion', body.state.version);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": { "mode": "raw", "raw": "{\n  \"reason\": \"Fondos insuficientes\",\n  \"expectedVersion\": {{reintentoVersion}}\n}" },
+            "url": "{{apiUrl}}/transactions/{{reintentoId}}/reject-payment"
+          }
+        },
+        {
+          "name": "Reintentar pago (intento 2)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 OK', () => pm.response.to.have.status(200));",
+                  "const body = pm.response.json();",
+                  "pm.test('Vuelve a PAYMENT_PENDING con intento 2', () => { pm.expect(body.state.status).to.eql('PAYMENT_PENDING'); pm.expect(body.state.attemptCount).to.eql(2); });",
+                  "pm.collectionVariables.set('reintentoVersion', body.state.version);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": { "mode": "raw", "raw": "{\n  \"expectedVersion\": {{reintentoVersion}}\n}" },
+            "url": "{{apiUrl}}/transactions/{{reintentoId}}/retry-payment"
+          }
+        },
+        {
+          "name": "Aprobar pago",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 OK', () => pm.response.to.have.status(200));",
+                  "const body = pm.response.json();",
+                  "pm.test('Estado PAYMENT_APPROVED', () => pm.expect(body.state.status).to.eql('PAYMENT_APPROVED'));",
+                  "pm.collectionVariables.set('reintentoVersion', body.state.version);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": { "mode": "raw", "raw": "{\n  \"approvalCode\": \"AUTH-982143\",\n  \"expectedVersion\": {{reintentoVersion}}\n}" },
+            "url": "{{apiUrl}}/transactions/{{reintentoId}}/approve-payment"
+          }
+        },
+        {
+          "name": "Completar transacción",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 OK', () => pm.response.to.have.status(200));",
+                  "const body = pm.response.json();",
+                  "pm.test('Estado COMPLETED en versión 6', () => { pm.expect(body.state.status).to.eql('COMPLETED'); pm.expect(body.state.version).to.eql(6); });",
+                  "pm.collectionVariables.set('reintentoVersion', body.state.version);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": { "mode": "raw", "raw": "{\n  \"expectedVersion\": {{reintentoVersion}}\n}" },
+            "url": "{{apiUrl}}/transactions/{{reintentoId}}/complete"
+          }
+        },
+        {
+          "name": "History API: estado reconstruido",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 OK', () => pm.response.to.have.status(200));",
+                  "const state = pm.response.json();",
+                  "pm.test('Replay da COMPLETED v6 con 2 intentos', () => { pm.expect(state.status).to.eql('COMPLETED'); pm.expect(state.version).to.eql(6); pm.expect(state.attemptCount).to.eql(2); pm.expect(state.lastRejectionReason).to.eql('Fondos insuficientes'); });"
+                ]
+              }
+            }
+          ],
+          "request": { "method": "GET", "url": "{{historyUrl}}/history/transactions/{{reintentoId}}" }
+        },
+        {
+          "name": "History API: historial de eventos",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 OK', () => pm.response.to.have.status(200));",
+                  "const types = pm.response.json().map((e) => e.type);",
+                  "pm.test('6 eventos en orden', () => pm.expect(types).to.eql(['TransactionCreated', 'PaymentRequested', 'PaymentRejected', 'PaymentRetried', 'PaymentApproved', 'TransactionCompleted']));"
+                ]
+              }
+            }
+          ],
+          "request": { "method": "GET", "url": "{{historyUrl}}/history/transactions/{{reintentoId}}/events" }
+        }
+      ]
+    },
+    {
+      "name": "3. Errores esperados",
+      "description": "Ninguno de estos comandos debe agregar un evento. Al final, el historial de la transacción sigue con 1 solo evento.",
+      "item": [
+        {
+          "name": "Crear transacción",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": { "type": "text/javascript", "exec": ["pm.collectionVariables.set('erroresId', 'pm-errores-' + Date.now());"] }
+            },
+            {
+              "listen": "test",
+              "script": { "type": "text/javascript", "exec": ["pm.test('201 Created', () => pm.response.to.have.status(201));"] }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": { "mode": "raw", "raw": "{\n  \"transactionId\": \"{{erroresId}}\",\n  \"amount\": 15000,\n  \"currency\": \"CRC\",\n  \"customerId\": \"cliente-pedro\"\n}" },
+            "url": "{{apiUrl}}/transactions"
+          }
+        },
+        {
+          "name": "Monto distinto al de la transacción (400)",
+          "event": [
+            { "listen": "test", "script": { "type": "text/javascript", "exec": ["pm.test('400 Bad Request', () => pm.response.to.have.status(400));"] } }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": { "mode": "raw", "raw": "{\n  \"amount\": 10,\n  \"expectedVersion\": 1\n}" },
+            "url": "{{apiUrl}}/transactions/{{erroresId}}/request-payment"
+          }
+        },
+        {
+          "name": "Versión esperada desactualizada (409)",
+          "event": [
+            { "listen": "test", "script": { "type": "text/javascript", "exec": ["pm.test('409 Conflict', () => pm.response.to.have.status(409));"] } }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": { "mode": "raw", "raw": "{\n  \"expectedVersion\": 99\n}" },
+            "url": "{{apiUrl}}/transactions/{{erroresId}}/request-payment"
+          }
+        },
+        {
+          "name": "Completar sin haber cobrado (400)",
+          "event": [
+            { "listen": "test", "script": { "type": "text/javascript", "exec": ["pm.test('400 Bad Request', () => pm.response.to.have.status(400));"] } }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": { "mode": "raw", "raw": "{\n  \"expectedVersion\": 1\n}" },
+            "url": "{{apiUrl}}/transactions/{{erroresId}}/complete"
+          }
+        },
+        {
+          "name": "Crear con un id que ya existe (409)",
+          "event": [
+            { "listen": "test", "script": { "type": "text/javascript", "exec": ["pm.test('409 Conflict', () => pm.response.to.have.status(409));"] } }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": { "mode": "raw", "raw": "{\n  \"transactionId\": \"{{erroresId}}\",\n  \"amount\": 1,\n  \"currency\": \"CRC\",\n  \"customerId\": \"otro\"\n}" },
+            "url": "{{apiUrl}}/transactions"
+          }
+        },
+        {
+          "name": "Transacción inexistente (404)",
+          "event": [
+            { "listen": "test", "script": { "type": "text/javascript", "exec": ["pm.test('404 Not Found', () => pm.response.to.have.status(404));"] } }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": { "mode": "raw", "raw": "{}" },
+            "url": "{{apiUrl}}/transactions/no-existe/request-payment"
+          }
+        },
+        {
+          "name": "History API: sigue con 1 solo evento",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 OK', () => pm.response.to.have.status(200));",
+                  "pm.test('Ningún comando inválido escribió eventos', () => pm.expect(pm.response.json().map((e) => e.type)).to.eql(['TransactionCreated']));"
+                ]
+              }
+            }
+          ],
+          "request": { "method": "GET", "url": "{{historyUrl}}/history/transactions/{{erroresId}}/events" }
+        }
+      ]
+    },
+    {
+      "name": "4. Consultas",
+      "item": [
+        {
+          "name": "Transaction API: listar transacciones",
+          "event": [
+            { "listen": "test", "script": { "type": "text/javascript", "exec": ["pm.test('200 OK', () => pm.response.to.have.status(200));"] } }
+          ],
+          "request": { "method": "GET", "url": "{{apiUrl}}/transactions" }
+        },
+        {
+          "name": "History API: listar transacciones reconstruidas",
+          "event": [
+            { "listen": "test", "script": { "type": "text/javascript", "exec": ["pm.test('200 OK', () => pm.response.to.have.status(200));"] } }
+          ],
+          "request": { "method": "GET", "url": "{{historyUrl}}/history/transactions" }
+        }
+      ]
+    }
+  ]
+}
