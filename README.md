@@ -219,6 +219,29 @@ No hace falta copiar ids ni versiones. Cada request guarda el `transactionId` y 
 
 Las direcciones están en las variables de la colección, `apiUrl` y `historyUrl`. Cámbialas para probar el ambiente desplegado.
 
+## Monitoreo con Grafana Cloud
+
+Las dos APIs pueden mandar trazas, métricas y logs a Grafana Cloud por OTLP, sin instalar un collector. Si no configuras nada, no envían nada y funcionan igual que siempre.
+
+Copia `.env.example` como `.env` en esta carpeta y completa dos valores que da Grafana en **Connections → OpenTelemetry (OTLP)**:
+
+```bash
+OTEL_EXPORTER_OTLP_ENDPOINT=https://otlp-gateway-<region>.grafana.net/otlp
+OTEL_EXPORTER_OTLP_HEADERS=Authorization=Basic%20<base64 de instanceId:token glc_>
+```
+
+Sin comillas, con `Basic%20` (no un espacio) y con el endpoint terminado en `/otlp`. El `.env` está en `.gitignore`: el token nunca se sube al repositorio.
+
+Después de guardar, reinicia las dos APIs. Un proceso que ya estaba encendido no lee el archivo de nuevo. En Grafana aparecen como `eventsourcing-transaction-api` y `eventsourcing-history-api`, con `deployment.environment=local`:
+
+- Trazas: **Explore → Tempo**.
+- Logs: **Explore → Loki**.
+- Métricas: **Explore → Mimir/Prometheus**.
+
+La Transaction API también expone `POST /otlp/v1/{traces|metrics|logs}`. El frontend manda ahí su telemetría y la API la reenvía a Grafana con el token del servidor, así el navegador nunca ve la clave.
+
+En Docker no hay `.env` dentro de la imagen: las mismas variables se pasan al contenedor. Si las dos APIs comparten un archivo de variables, no pongas ahí `OTEL_SERVICE_NAME` ni `PORT`, porque las dos los leerían; cada API ya trae su propio nombre y puerto por defecto.
+
 ## Cómo comprobar que todo sigue en pie
 
 ```powershell
