@@ -5,12 +5,19 @@ import { AppModule } from './app.module';
 import { ValidationPipe, Logger } from '@nestjs/common';
 import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
 import { forwardOtlp } from './otlp-forwarder';
+import { OtelLogger } from './otel-logger';
+import { logRequests } from './http-logging';
+import { RejectedCommandInterceptor } from './rejected-command.interceptor';
 
 async function bootstrap() {
   const logger = new Logger('Bootstrap');
-  const app = await NestFactory.create(AppModule, { bodyParser: false });
+  const app = await NestFactory.create(AppModule, {
+    bodyParser: false,
+    logger: new OtelLogger(),
+  });
 
   app.enableCors();
+  app.use(logRequests);
   app.use('/otlp/v1', forwardOtlp);
   app.use(express.json());
   app.use(express.urlencoded({ extended: true }));
@@ -22,6 +29,7 @@ async function bootstrap() {
       forbidNonWhitelisted: true,
     }),
   );
+  app.useGlobalInterceptors(new RejectedCommandInterceptor());
 
   const swaggerConfig = new DocumentBuilder()
     .setTitle('Transaction API (Command Service)')
