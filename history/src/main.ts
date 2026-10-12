@@ -3,11 +3,16 @@ import 'reflect-metadata';
 import { Logger } from '@nestjs/common';
 import { NestFactory } from '@nestjs/core';
 import { HistoryAppModule } from './app.module';
+import { OtelLogger } from './otel-logger';
+import { logRequests } from './http-logging';
 
 async function bootstrap() {
   const logger = new Logger('HistoryBootstrap');
-  const app = await NestFactory.create(HistoryAppModule);
+  const app = await NestFactory.create(HistoryAppModule, {
+    logger: new OtelLogger(),
+  });
   app.enableCors();
+  app.use(logRequests);
 
   const port = process.env.PORT ?? 3001;
   await app.listen(port);

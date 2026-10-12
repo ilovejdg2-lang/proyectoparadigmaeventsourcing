@@ -134,9 +134,13 @@ export class InMemoryEventStore implements IEventStore, OnModuleInit {
     this.persistEvent(immutableEvent);
     this.remember(immutableEvent);
 
-    this.logger.log(
-      `Evento agregado [${event.type}] v${event.version} a la transacción ${event.transactionId} (ID de evento: ${event.eventId})`,
-    );
+    this.logger.log({
+      message: `Evento agregado [${event.type}] v${event.version} a la transacción ${event.transactionId} (ID de evento: ${event.eventId})`,
+      event_type: event.type,
+      event_version: event.version,
+      event_id: event.eventId,
+      transaction_id: event.transactionId,
+    });
 
     return cloneEvent(immutableEvent);
   }

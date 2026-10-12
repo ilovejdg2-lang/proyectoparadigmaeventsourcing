@@ -242,6 +242,46 @@ La Transaction API también expone `POST /otlp/v1/{traces|metrics|logs}`. El fro
 
 En Docker no hay `.env` dentro de la imagen: las mismas variables se pasan al contenedor. Si las dos APIs comparten un archivo de variables, no pongas ahí `OTEL_SERVICE_NAME` ni `PORT`, porque las dos los leerían; cada API ya trae su propio nombre y puerto por defecto.
 
+### Qué logs llegan a Loki
+
+Todo lo que las APIs escriben en la consola también se manda a Loki, con su nivel (`INFO`, `WARN`, `ERROR`). Algunos logs llevan además campos propios, que en Loki aparecen como metadatos y se pueden filtrar:
+
+| Log | Nivel | Campos |
+| --- | --- | --- |
+| Cada evento agregado al event store | `INFO` | `event_type`, `event_version`, `event_id`, `transaction_id` |
+| Cada comando que la API rechaza, con el motivo | `WARN` | `http_status_code`, `reason`, `transaction_id`, `http_path` |
+| Cada request HTTP de las dos APIs | `INFO` (`ERROR` si es 5xx) | `http_method`, `http_path`, `http_status_code`, `duration_ms` |
+| Errores no capturados del navegador | `ERROR` | `error.type` (servicio `eventsourcing-fe`) |
+
+Los logs que se escriben durante un request quedan ligados a su traza: desde un log en Loki se puede saltar a la traza en Tempo.
+
+### El dashboard
+
+En `grafana/dashboard-eventsourcing.json` hay un dashboard listo. En Grafana: **Dashboards → New → Import**, sube el archivo y, cuando pregunte por las fuentes de datos, elige las de tu stack: para **Loki** la de logs (`grafanacloud-<stack>-logs`) y para **Prometheus** la de métricas (`grafanacloud-<stack>-prom`). Muestra:
+
+- Totales: eventos registrados, pagos rechazados, transacciones completadas y comandos rechazados.
+- Eventos por tipo y comandos rechazados por código HTTP, a lo largo del tiempo.
+- El historial de una transacción: escribe un `transactionId` en el campo de arriba y aparecen sus eventos en orden, como en la History API, pero contados por los logs.
+- Los eventos agregados, los rechazos y errores, y los requests HTTP.
+- Métricas de Prometheus: requests por segundo y latencia p95 de cada API.
+
+### Demo con Grafana
+
+1. Con el `.env` completo, enciende las dos APIs y ejecuta `npm run simular`. Espera un minuto: Grafana tarda un poco en recibir los datos.
+2. Abre el dashboard. Los totales y las barras de "Eventos por tipo" ya muestran las transacciones de la simulación.
+3. Copia del resultado del script el id del escenario con reintento (`demo-reintento-...`) y pégalo en el campo `transactionId`. Se ven los seis eventos, del `TransactionCreated` al `TransactionCompleted`.
+4. En "Comandos rechazados y errores" están los cinco comandos inválidos del escenario de errores, cada uno con su motivo (monto distinto, versión vieja, transición inválida, id repetido, id inexistente).
+5. Para buscar a mano, en **Explore → Loki**:
+
+```logql
+{service_name="eventsourcing-transaction-api"} | event_type="PaymentRejected"
+{service_name="eventsourcing-transaction-api"} | transaction_id="demo-reintento-..."
+{service_name=~"eventsourcing-.*"} | severity_text="WARN"
+sum by (event_type) (count_over_time({service_name="eventsourcing-transaction-api"} | event_type!="" [5m]))
+```
+
+6. En **Explore → Tempo**, busca el servicio `eventsourcing-transaction-api` y abre una traza de `POST /transactions/{id}/request-payment`: se ve cuánto tardó y, desde ahí, sus logs.
+
 ## Cómo comprobar que todo sigue en pie
 
 ```powershell
