@@ -148,7 +148,8 @@ async function main() {
     await fetch(`${API_URL}/transactions`);
   } catch {
     console.error(`No se pudo conectar con la Transaction API en ${API_URL}. ¿Está encendida?`);
-    process.exit(1);
+    process.exitCode = 1;
+    return;
   }
 
   await scenario('1. Camino feliz', { status: 'COMPLETED', version: 4, attemptCount: 1 }, happyPath);
@@ -163,12 +164,13 @@ async function main() {
   if (unexpected.length > 0) {
     console.error('\nResultados inesperados:');
     for (const line of unexpected) console.error(`  - ${line}`);
-    process.exit(1);
+    process.exitCode = 1;
+    return;
   }
   console.log('\nSimulación terminada sin resultados inesperados.');
 }
 
 main().catch((error) => {
   console.error(error);
-  process.exit(1);
+  process.exitCode = 1;
 });

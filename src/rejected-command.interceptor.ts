@@ -30,6 +30,7 @@ export class RejectedCommandInterceptor implements NestInterceptor {
           typeof req.params?.id === 'string' ? req.params.id : undefined;
 
         if (error instanceof HttpException && error.getStatus() < 500) {
+          if (req.method === 'GET') return throwError(() => error);
           const reason = reasonOf(error);
           this.logger.warn({
             message: `Comando rechazado: ${req.method} ${req.originalUrl} -> ${error.getStatus()} ${reason}`,
