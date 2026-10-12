@@ -62,7 +62,8 @@ export function forwardOtlp(req: Request, res: Response, next: NextFunction) {
 
   rawParser(req, res, (err?: { status?: number; type?: string }) => {
     if (err) {
-      const status = err.type === 'entity.too.large' ? 413 : (err.status ?? 400);
+      const status =
+        err.type === 'entity.too.large' ? 413 : (err.status ?? 400);
       res.status(status).end();
       return;
     }
