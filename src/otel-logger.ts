@@ -19,6 +19,7 @@ function isLogFields(value: unknown): value is LogFields {
   return (
     typeof value === 'object' &&
     value !== null &&
+    !(value instanceof Error) &&
     typeof (value as { message?: unknown }).message === 'string'
   );
 }
