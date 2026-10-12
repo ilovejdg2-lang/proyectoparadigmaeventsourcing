@@ -18,7 +18,7 @@ function deploymentEnvironment(): string {
 }
 
 export function startOtel(endpoint: string, defaultServiceName: string) {
-  const collectorHost = new URL(endpoint).host;
+  const collectorHost = new URL(endpoint).hostname;
   const sdk = new NodeSDK({
     resource: resourceFromAttributes({
       'service.name': process.env.OTEL_SERVICE_NAME || defaultServiceName,
@@ -40,7 +40,7 @@ export function startOtel(endpoint: string, defaultServiceName: string) {
         },
         '@opentelemetry/instrumentation-undici': {
           ignoreRequestHook: (req) =>
-            new URL(req.origin).host === collectorHost,
+            new URL(req.origin).hostname === collectorHost,
         },
         '@opentelemetry/instrumentation-fs': { enabled: false },
       }),
