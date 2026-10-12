@@ -1,13 +1,19 @@
+import './otel';
+import express from 'express';
 import { NestFactory } from '@nestjs/core';
 import { AppModule } from './app.module';
 import { ValidationPipe, Logger } from '@nestjs/common';
 import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
+import { forwardOtlp } from './otlp-forwarder';
 
 async function bootstrap() {
   const logger = new Logger('Bootstrap');
-  const app = await NestFactory.create(AppModule);
+  const app = await NestFactory.create(AppModule, { bodyParser: false });
 
   app.enableCors();
+  app.use('/otlp/v1', forwardOtlp);
+  app.use(express.json());
+  app.use(express.urlencoded({ extended: true }));
 
   app.useGlobalPipes(
     new ValidationPipe({
@@ -42,4 +48,3 @@ async function bootstrap() {
   logger.log(`Documentación Swagger disponible en: http://localhost:${port}/api/docs`);
 }
 bootstrap();
-
