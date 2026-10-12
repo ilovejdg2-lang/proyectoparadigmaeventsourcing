@@ -240,6 +240,18 @@ Después de guardar, reinicia las dos APIs. Un proceso que ya estaba encendido n
 
 La Transaction API también expone `POST /otlp/v1/{traces|metrics|logs}`. El frontend manda ahí su telemetría y la API la reenvía a Grafana con el token del servidor, así el navegador nunca ve la clave.
 
+### Comprobar la conexión
+
+Con la Transaction API y el frontend encendidos y el `.env` completo en los dos:
+
+```bash
+npm run probar:otlp
+```
+
+Manda una traza y un log mínimos por el reenvío de la API y por el proxy de Vite, y dice qué significa cada respuesta: `200` llegó a Grafana, `401` el token está mal copiado, `404` el proceso arrancó sin el `.env` (hay que reiniciarlo), `502` no se alcanzó Grafana. No imprime el token. Si usas otros puertos: `API_URL=http://localhost:3010 FRONT_URL=http://localhost:5174 npm run probar:otlp`.
+
+El botón "Test connection" del asistente del collector de Grafana se queda en "No metrics were found": es normal, porque aquí no hay collector; las apps mandan directo al gateway. Pyroscope también queda vacío, porque no se mandan perfiles.
+
 En Docker no hay `.env` dentro de la imagen: las mismas variables se pasan al contenedor. Si las dos APIs comparten un archivo de variables, no pongas ahí `OTEL_SERVICE_NAME` ni `PORT`, porque las dos los leerían; cada API ya trae su propio nombre y puerto por defecto.
 
 ### Qué logs llegan a Loki
@@ -249,7 +261,7 @@ Todo lo que las APIs escriben en la consola también se manda a Loki, con su niv
 | Log | Nivel | Campos |
 | --- | --- | --- |
 | Cada evento agregado al event store | `INFO` | `event_type`, `event_version`, `event_id`, `transaction_id` |
-| Cada comando que la API rechaza, con el motivo | `WARN` | `http_status_code`, `reason`, `transaction_id`, `http_path` |
+| Cada comando (`POST`) que la API rechaza, con el motivo | `WARN` | `http_status_code`, `reason`, `transaction_id`, `http_path` |
 | Cada request HTTP de las dos APIs | `INFO` (`ERROR` si es 5xx) | `http_method`, `http_path`, `http_status_code`, `duration_ms` |
 | Errores no capturados del navegador | `ERROR` | `error.type` (servicio `eventsourcing-fe`) |
 

@@ -20,6 +20,7 @@
     "start:history": "node dist-history/main.js",
     "start:history:dev": "npm --workspace=@eventsourcing/domain run build && ts-node --project history/tsconfig.json history/src/main.ts",
     "simular": "node scripts/simular.mjs",
+    "probar:otlp": "node scripts/probar-otlp.mjs",
     "test": "jest",
     "test:watch": "jest --watch",
     "test:cov": "jest --coverage",
