@@ -85,9 +85,10 @@ async function probe(label, url, payload) {
       signal: AbortSignal.timeout(15_000),
     });
     const text = res.status === 502 ? ` "${await res.text()}"` : '';
-    const meaning = MEANING[res.status] ?? 'Respuesta inesperada.';
-    console.log(`  ${res.status === 200 ? 'OK ' : 'MAL'} ${label} -> ${res.status}${text}  ${meaning}`);
-    return res.status === 200;
+    // Grafana acepta los logs con 204 sin cuerpo, así que cualquier 2xx es éxito.
+    const meaning = res.ok ? MEANING[200] : (MEANING[res.status] ?? 'Respuesta inesperada.');
+    console.log(`  ${res.ok ? 'OK ' : 'MAL'} ${label} -> ${res.status}${text}  ${meaning}`);
+    return res.ok;
   } catch (error) {
     console.log(`  MAL ${label} -> sin respuesta (${error.cause?.code ?? error.name}). ¿Está corriendo y en ese puerto?`);
     return false;
