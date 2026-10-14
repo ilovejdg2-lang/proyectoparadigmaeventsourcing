@@ -28,7 +28,7 @@ Es una separación de escritura y lectura (CQRS): la Transaction API es la únic
 
 | Qué | Dónde |
 | --- | --- |
-| Ambiente desplegado | _pendiente: se completa al desplegar (ver [Despliegue](#despliegue))_ |
+| Ambiente desplegado (GitHub Codespaces) | Frontend: <https://supreme-broccoli-77x94wjp969f4jv-5173.app.github.dev/><br>Transaction API (Swagger): <https://supreme-broccoli-77x94wjp969f4jv-3000.app.github.dev/api/docs><br>History API: <https://supreme-broccoli-77x94wjp969f4jv-3001.app.github.dev/><br>_El Codespace se apaga tras ~30 min sin uso; se reactiva abriéndolo desde GitHub (ver [Despliegue](#despliegue))._ |
 | Imágenes en Docker Hub | ver [Imágenes publicadas](#imágenes-publicadas) |
 | Levantar todo en local | `.\run.ps1` (Windows) o `./run.sh` (Linux/Mac) |
 | Simular el escenario | `npm run simular` |
