@@ -4,12 +4,13 @@ Imagina un pago que hoy figura como «completado». Si alguien pregunta qué pas
 
 Eso es Event Sourcing. El sistema no actualiza una fila. Agrega una línea nueva al final de un archivo, `event-store.jsonl`. Para saber cómo está una transacción ahora, se leen sus líneas desde el principio y se vuelven a aplicar. El resultado es el estado actual. Las líneas, en orden, son el historial.
 
-Hay dos programas, a propósito separados:
+Hay tres programas, a propósito separados:
 
 - **Transaction API** (puerto 3000) recibe las acciones: crear, cobrar, rechazar, reintentar, aprobar, cerrar. Solo escribe.
 - **History API** (puerto 3001) no acepta acciones. Lee el mismo archivo y muestra dos cosas: el estado reconstruido y la lista de eventos.
+- **Frontend** (puerto 5173) es la pantalla para crear una transacción y consultar su historial. Habla con las dos APIs; no guarda eventos.
 
-Si las dos arrancan desde la misma carpeta, ven el mismo archivo `data/event-store.jsonl`.
+Si las dos APIs arrancan desde la misma carpeta, ven el mismo archivo `data/event-store.jsonl`. Con Docker Compose ese archivo vive en un volumen: la Transaction API escribe y la History API lo monta en solo lectura.
 
 ## Antes de empezar
 
@@ -252,7 +253,7 @@ Manda una traza y un log mínimos por el reenvío de la API y por el proxy de Vi
 
 El botón "Test connection" del asistente del collector de Grafana se queda en "No metrics were found": es normal, porque aquí no hay collector; las apps mandan directo al gateway. Pyroscope también queda vacío, porque no se mandan perfiles.
 
-En Docker no hay `.env` dentro de la imagen: las mismas variables se pasan al contenedor. Si las dos APIs comparten un archivo de variables, no pongas ahí `OTEL_SERVICE_NAME` ni `PORT`, porque las dos los leerían; cada API ya trae su propio nombre y puerto por defecto.
+En Docker el `.env` no se copia dentro de la imagen. `docker compose` lo inyecta al arrancar las dos APIs. Ese archivo no debe incluir `OTEL_SERVICE_NAME` ni `PORT`: el Compose fija el puerto y el nombre de cada servicio (`eventsourcing-transaction-api` y `eventsourcing-history-api`).
 
 ### Qué logs llegan a Loki
 
@@ -302,6 +303,58 @@ npm test
 
 Ejecuta las pruebas del dominio, de la Transaction API y de la History API, incluyendo las que llaman a la pantalla y a los endpoints de historial. Cada prueba usa un archivo temporal. Tu `data/event-store.jsonl` de la demo no se toca.
 
-## Qué falta
+## Etapa 5. Las tres piezas, juntas
 
-La etapa 5 todavía no está: un Docker Compose que levante las dos APIs juntas, los scripts de despliegue y el guion de la demo. Hoy se encienden por separado, con los comandos de arriba.
+Hasta aquí cada programa se encendía en su propia terminal. Esta etapa los deja en un solo `docker compose`: Transaction API, History API y el frontend. Grafana Cloud sigue afuera; no es un contenedor. Si el `.env` de esta carpeta está completo, Compose se lo pasa a las dos APIs al arrancar. El token no queda dentro de la imagen y no se sube al repositorio.
+
+El archivo de eventos ya no es `data/event-store.jsonl` del disco. Vive en un volumen de Docker llamado `event-store`. La Transaction API lo monta en `/app/data` y escribe ahí. La History API monta el mismo volumen en `/data`, en solo lectura, y lee `/data/event-store.jsonl`. Si History se cayera y volviera a subir, seguiría viendo lo que Transaction ya escribió.
+
+El navegador no usa los nombres internos de Docker. El frontend se construye apuntando a `http://localhost:3000` y `http://localhost:3001`, que son los puertos publicados en tu máquina. La telemetría del navegador sale hacia `http://localhost:3000/otlp/...` y la Transaction API la reenvía a Grafana.
+
+Hace falta Docker Desktop (o Docker Engine con Compose v2). Desde `proyectoparadigmaeventsourcing`:
+
+```powershell
+npm run up
+```
+
+Eso construye las tres imágenes, las levanta y espera a que respondan. Cuando termina:
+
+- Frontend: [http://localhost:5173/](http://localhost:5173/)
+- Swagger: [http://localhost:3000/api/docs](http://localhost:3000/api/docs)
+- Pantalla simple de History: [http://localhost:3001/](http://localhost:3001/)
+
+`npm run down` apaga los contenedores. El volumen se queda, así que el historial sigue ahí la próxima vez que hagas `npm run up`.
+
+### Guion de la demo
+
+Este es el orden para mostrar el trabajo de punta a punta. Calcula unos minutos la primera vez: las imágenes se construyen desde cero.
+
+1. Confirma que el `.env` de esta carpeta tiene el endpoint y el token de Grafana, si quieres ver el dashboard. Sin ese archivo las APIs igual arrancan; solo no envían telemetría.
+2. Ejecuta `npm run demo`. Levanta la plataforma, espera a que las tres direcciones respondan y corre la simulación de la etapa 4. Si la History API no responde, el script termina con error: ya no da la simulación por buena sin poder reconstruir el historial.
+3. En la consola queda una tabla. Anota el id del escenario con reintento, algo como `demo-reintento-...`. Su estado esperado es `COMPLETED`, versión 6, dos intentos.
+4. Abre [http://localhost:5173/](http://localhost:5173/). Busca ese id. Tienes que ver el estado reconstruido y, en orden, `TransactionCreated`, `PaymentRequested`, `PaymentRejected`, `PaymentRetried`, `PaymentApproved` y `TransactionCompleted`.
+5. Abre también [http://localhost:3001/](http://localhost:3001/), pulsa **Actualizar lista** y elige la misma transacción. Es la misma lectura del archivo, en la pantalla simple de History. Swagger, en el puerto 3000, sirve si quieres mostrar un comando a mano.
+6. Si el `.env` está completo, espera cerca de un minuto y abre el dashboard de Grafana. Pega el mismo id en `transactionId`. Los seis eventos aparecen otra vez, esta vez contados por los logs. El detalle de los paneles está en la sección de Grafana, más arriba.
+7. Cuando termines, `npm run down`.
+
+Si la plataforma ya está arriba y solo quieres repetir los escenarios, alcanza con `npm run simular`. Cada corrida crea ids nuevos.
+
+### Publicar las imágenes
+
+El Compose ya etiqueta las imágenes. Sin variable de entorno el nombre local es `eventsourcing/transaction-api:etapa5` (y lo mismo para `history-api` y `frontend`). Para dejarlas a nombre de tu usuario de Docker Hub:
+
+```powershell
+$env:DOCKERHUB_USER = "tu-usuario"
+docker login
+npm run publicar
+```
+
+`npm run publicar` construye y hace `docker compose push`. No hace falta inventar otro `docker build`. Sustituye `tu-usuario` por el usuario real de Docker Hub antes de ejecutarlo. Este repositorio no publica las imágenes por sí solo.
+
+Si prefieres construir una imagen suelta, sin Compose:
+
+```powershell
+docker build -t eventsourcing/transaction-api:etapa5 .
+docker build -f history/Dockerfile -t eventsourcing/history-api:etapa5 .
+docker build -f ..\eventsourcingfrontend\Dockerfile -t eventsourcing/frontend:etapa5 ..\eventsourcingfrontend
+```
