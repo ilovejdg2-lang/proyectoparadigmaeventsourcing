@@ -1,27 +1,33 @@
 # Las dos APIs comparten un volumen. History lo monta en solo lectura.
-# El .env de Grafana se inyecta al arrancar y no entra en la imagen.
-# DOCKERHUB_USER, si existe, cambia el nombre con el que se etiquetan las imágenes.
+# Las imágenes se bajan de Docker Hub (docker compose pull). Con --build se construyen
+# desde el código; el frontend necesita el repo eventsourcingfrontend al lado de este.
+# Los valores de Grafana salen del .env de esta carpeta o del entorno, y no entran en la imagen.
 
 name: eventsourcing
 
+x-otel: &otel
+  OTEL_EXPORTER_OTLP_PROTOCOL: ${OTEL_EXPORTER_OTLP_PROTOCOL:-http/protobuf}
+  OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT:-}
+  OTEL_EXPORTER_OTLP_HEADERS: ${OTEL_EXPORTER_OTLP_HEADERS:-}
+  OTEL_RESOURCE_ATTRIBUTES: ${OTEL_RESOURCE_ATTRIBUTES:-deployment.environment=local}
+
 services:
   transaction-api:
-    image: ${DOCKERHUB_USER:-eventsourcing}/transaction-api:etapa5
+    image: ${DOCKERHUB_USER:-mdm2510}/eventsourcing-transaction-api:${TAG:-latest}
     build:
       context: .
       dockerfile: Dockerfile
     ports:
       - "3000:3000"
     environment:
+      <<: *otel
       PORT: "3000"
       NODE_ENV: production
       EVENT_STORE_FILE: /app/data/event-store.jsonl
       OTEL_SERVICE_NAME: eventsourcing-transaction-api
-    env_file:
-      - path: .env
-        required: false
     volumes:
       - event-store:/app/data
+    restart: unless-stopped
     healthcheck:
       test:
         [
@@ -36,22 +42,21 @@ services:
       start_period: 25s
 
   history-api:
-    image: ${DOCKERHUB_USER:-eventsourcing}/history-api:etapa5
+    image: ${DOCKERHUB_USER:-mdm2510}/eventsourcing-history-api:${TAG:-latest}
     build:
       context: .
       dockerfile: history/Dockerfile
     ports:
       - "3001:3001"
     environment:
+      <<: *otel
       PORT: "3001"
       NODE_ENV: production
       EVENT_STORE_FILE: /data/event-store.jsonl
       OTEL_SERVICE_NAME: eventsourcing-history-api
-    env_file:
-      - path: .env
-        required: false
     volumes:
       - event-store:/data:ro
+    restart: unless-stopped
     depends_on:
       transaction-api:
         condition: service_healthy
@@ -69,17 +74,16 @@ services:
       start_period: 25s
 
   frontend:
-    image: ${DOCKERHUB_USER:-eventsourcing}/frontend:etapa5
+    image: ${DOCKERHUB_USER:-mdm2510}/eventsourcing-frontend:${TAG:-latest}
     build:
       context: ../eventsourcingfrontend
       dockerfile: Dockerfile
-      args:
-        VITE_API_URL: http://localhost:3000
-        VITE_HISTORY_API_URL: http://localhost:3001
-        VITE_API_BASE_URL: http://localhost:3000
-        VITE_OTEL_ENABLED: "true"
     ports:
       - "5173:5173"
+    environment:
+      API_PROXY_TARGET: http://transaction-api:3000
+      HISTORY_PROXY_TARGET: http://history-api:3001
+    restart: unless-stopped
     depends_on:
       transaction-api:
         condition: service_healthy

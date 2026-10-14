@@ -12,6 +12,27 @@ Hay tres programas, a propósito separados:
 
 Si las dos APIs arrancan desde la misma carpeta, ven el mismo archivo `data/event-store.jsonl`. Con Docker Compose ese archivo vive en un volumen: la Transaction API escribe y la History API lo monta en solo lectura.
 
+```mermaid
+flowchart LR
+  B[Navegador] --> F[Frontend :5173]
+  F -->|"comandos: POST /transactions/..."| T[Transaction API :3000]
+  F -->|"consultas: GET /history/..."| H[History API :3001]
+  T -->|"agrega eventos (append-only)"| S[("event-store.jsonl<br/>volumen event-store")]
+  H -->|"lee y reconstruye (solo lectura)"| S
+  T -.->|"OTLP: trazas, logs, métricas"| G[Grafana Cloud]
+  H -.->|OTLP| G
+  F -.->|"telemetría del navegador por /otlp de la API"| T
+```
+
+Es una separación de escritura y lectura (CQRS): la Transaction API es la única que escribe eventos y la History API solo los lee. No se llaman entre sí; el contrato entre las dos es el archivo de eventos y el paquete `@eventsourcing/domain`, que ambas usan para validar y reconstruir. El frontend habla con las dos.
+
+| Qué | Dónde |
+| --- | --- |
+| Ambiente desplegado | _pendiente: se completa al desplegar (ver [Despliegue](#despliegue))_ |
+| Imágenes en Docker Hub | ver [Imágenes publicadas](#imágenes-publicadas) |
+| Levantar todo en local | `.\run.ps1` (Windows) o `./run.sh` (Linux/Mac) |
+| Simular el escenario | `npm run simular` |
+
 ## Antes de empezar
 
 Hace falta Node.js 22 y npm. Abre una terminal en la carpeta `proyectoparadigmaeventsourcing` y deja instaladas las dependencias:
@@ -309,21 +330,21 @@ Hasta aquí cada programa se encendía en su propia terminal. Esta etapa los dej
 
 El archivo de eventos ya no es `data/event-store.jsonl` del disco. Vive en un volumen de Docker llamado `event-store`. La Transaction API lo monta en `/app/data` y escribe ahí. La History API monta el mismo volumen en `/data`, en solo lectura, y lee `/data/event-store.jsonl`. Si History se cayera y volviera a subir, seguiría viendo lo que Transaction ya escribió.
 
-El navegador no usa los nombres internos de Docker. El frontend se construye apuntando a `http://localhost:3000` y `http://localhost:3001`, que son los puertos publicados en tu máquina. La telemetría del navegador sale hacia `http://localhost:3000/otlp/...` y la Transaction API la reenvía a Grafana.
+El navegador nunca llama directo a las APIs por su puerto. Llama al mismo frontend, en `/command-api/...` y `/history-api/...`, y el contenedor del frontend reenvía esas rutas a `transaction-api` y `history-api` por la red interna de Docker. Por eso la misma imagen funciona en tu máquina, en una VM o en Codespaces sin reconstruirla. La telemetría del navegador sale por `/command-api/otlp/...` y la Transaction API la reenvía a Grafana.
 
 Hace falta Docker Desktop (o Docker Engine con Compose v2). Desde `proyectoparadigmaeventsourcing`:
 
 ```powershell
-npm run up
+.\run.ps1
 ```
 
-Eso construye las tres imágenes, las levanta y espera a que respondan. Cuando termina:
+En Linux o Mac, `./run.sh`. Los dos hacen lo que pide el enunciado: `docker compose pull` para bajar las imágenes de Docker Hub y `docker compose up -d` para levantarlas. Luego esperan a que las tres direcciones respondan. Para construir las imágenes desde el código en vez de bajarlas: `.\run.ps1 -Build` (necesita el repo `eventsourcingfrontend` al lado de este). `npm run up` hace lo mismo que `-Build`. Cuando termina:
 
 - Frontend: [http://localhost:5173/](http://localhost:5173/)
 - Swagger: [http://localhost:3000/api/docs](http://localhost:3000/api/docs)
 - Pantalla simple de History: [http://localhost:3001/](http://localhost:3001/)
 
-`npm run down` apaga los contenedores. El volumen se queda, así que el historial sigue ahí la próxima vez que hagas `npm run up`.
+`.\run.ps1 -Down` (o `npm run down`) apaga los contenedores. El volumen se queda, así que el historial sigue ahí la próxima vez que levantes la plataforma.
 
 ### Guion de la demo
 
@@ -339,22 +360,53 @@ Este es el orden para mostrar el trabajo de punta a punta. Calcula unos minutos 
 
 Si la plataforma ya está arriba y solo quieres repetir los escenarios, alcanza con `npm run simular`. Cada corrida crea ids nuevos.
 
-### Publicar las imágenes
+### Imágenes publicadas
 
-El Compose ya etiqueta las imágenes. Sin variable de entorno el nombre local es `eventsourcing/transaction-api:etapa5` (y lo mismo para `history-api` y `frontend`). Para dejarlas a nombre de tu usuario de Docker Hub:
+| Servicio | Imagen en Docker Hub |
+| --- | --- |
+| Transaction API | [`mdm2510/eventsourcing-transaction-api`](https://hub.docker.com/r/mdm2510/eventsourcing-transaction-api) |
+| History API | [`mdm2510/eventsourcing-history-api`](https://hub.docker.com/r/mdm2510/eventsourcing-history-api) |
+| Frontend | [`mdm2510/eventsourcing-frontend`](https://hub.docker.com/r/mdm2510/eventsourcing-frontend) |
+
+El `docker-compose.yml` ya apunta a esas imágenes con la etiqueta `latest`. Para volver a publicarlas después de un cambio, con los dos repos uno al lado del otro:
 
 ```powershell
-$env:DOCKERHUB_USER = "tu-usuario"
 docker login
 npm run publicar
 ```
 
-`npm run publicar` construye y hace `docker compose push`. No hace falta inventar otro `docker build`. Sustituye `tu-usuario` por el usuario real de Docker Hub antes de ejecutarlo. Este repositorio no publica las imágenes por sí solo.
+`npm run publicar` construye las tres y hace `docker compose push`. Si alguien más las publica en su propia cuenta, antes define `$env:DOCKERHUB_USER = "su-usuario"`.
 
-Si prefieres construir una imagen suelta, sin Compose:
+## Despliegue
+
+El despliegue usa las mismas imágenes de Docker Hub y el mismo `run.sh`. Hay dos caminos; cualquiera sirve para la presentación.
+
+### Opción A: GitHub Codespaces (sin tarjeta, desde GitHub)
+
+1. En GitHub, en este repositorio: **Code → Codespaces → Create codespace on main**.
+2. Si quieres telemetría, antes crea dos secretos en **Settings → Secrets and variables → Codespaces**: `OTEL_EXPORTER_OTLP_ENDPOINT` y `OTEL_EXPORTER_OTLP_HEADERS`, con los mismos valores del `.env`. Compose los toma del entorno.
+3. Al abrir, el codespace ejecuta `bash run.sh` solo (está en `.devcontainer/devcontainer.json`): baja las imágenes y levanta los tres contenedores.
+4. En la pestaña **Ports**, en los puertos 5173, 3000 y 3001: clic derecho → **Port Visibility → Public**. Copia las direcciones `https://...-5173.app.github.dev` y compártelas.
+
+El codespace se apaga solo tras un rato sin uso. Antes de la presentación, ábrelo, espera a que `run.sh` termine y revisa que la visibilidad siga en **Public**.
+
+### Opción B: una máquina virtual (Azure for Students, AWS, VPS)
+
+1. Crea una VM Ubuntu y abre en su firewall los puertos 5173, 3000 y 3001 (en Azure: **Networking → Add inbound port rule**).
+2. Entra por SSH e instala Docker: `curl -fsSL https://get.docker.com | sudo sh`.
+3. Clona y levanta:
+
+```bash
+git clone https://github.com/ilovejdg2-lang/proyectoparadigmaeventsourcing.git
+cd proyectoparadigmaeventsourcing
+cp .env.example .env    # completa el endpoint y el token de Grafana si los quieres
+sudo PUBLIC_HOST=<ip-publica> ./run.sh
+```
+
+Para que Grafana distinga este ambiente del local, en el `.env` de la VM pon `OTEL_RESOURCE_ATTRIBUTES=deployment.environment=production`.
+
+Desde tu máquina, la simulación también corre contra el servidor:
 
 ```powershell
-docker build -t eventsourcing/transaction-api:etapa5 .
-docker build -f history/Dockerfile -t eventsourcing/history-api:etapa5 .
-docker build -f ..\eventsourcingfrontend\Dockerfile -t eventsourcing/frontend:etapa5 ..\eventsourcingfrontend
+$env:API_URL = "http://<ip-publica>:3000"; $env:HISTORY_URL = "http://<ip-publica>:3001"; npm run simular
 ```
