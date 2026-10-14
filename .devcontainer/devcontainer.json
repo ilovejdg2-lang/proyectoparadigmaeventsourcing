@@ -1,0 +1,14 @@
+{
+  "name": "eventsourcing",
+  "image": "mcr.microsoft.com/devcontainers/javascript-node:22",
+  "features": {
+    "ghcr.io/devcontainers/features/docker-in-docker:2": {}
+  },
+  "forwardPorts": [5173, 3000, 3001],
+  "portsAttributes": {
+    "5173": { "label": "Frontend", "onAutoForward": "openBrowser" },
+    "3000": { "label": "Transaction API" },
+    "3001": { "label": "History API" }
+  },
+  "postStartCommand": "bash run.sh"
+}
