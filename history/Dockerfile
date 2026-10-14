@@ -27,9 +27,8 @@ WORKDIR /app
 
 ENV NODE_ENV=production
 ENV PORT=3001
-# Mismo archivo que Transaction API. En la etapa 5 el compose lo monta en solo lectura:
-#   target: /data/event-store.jsonl
-#   read_only: true
+# El compose monta el volumen del event store en /data, en solo lectura.
+# El archivo queda en /data/event-store.jsonl.
 ENV EVENT_STORE_FILE=/data/event-store.jsonl
 
 COPY --from=builder /app/package*.json ./

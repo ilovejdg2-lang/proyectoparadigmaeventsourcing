@@ -106,10 +106,17 @@ async function invalidCommands() {
 
 async function verifyWithHistory() {
   console.log(`\nVerificación en la History API (${HISTORY_URL})`);
+  let probe;
   try {
-    await fetch(`${HISTORY_URL}/history/transactions`);
+    probe = await fetch(`${HISTORY_URL}/history/transactions`);
   } catch {
-    console.log('  La History API no responde; se omite la verificación.');
+    unexpected.push(`History API no responde en ${HISTORY_URL}`);
+    console.error('  La History API no responde. La simulación no puede comprobar el replay.');
+    return;
+  }
+  if (!probe.ok) {
+    unexpected.push(`History API respondió ${probe.status} al listar transacciones`);
+    console.error(`  La History API respondió ${probe.status}.`);
     return;
   }
 
