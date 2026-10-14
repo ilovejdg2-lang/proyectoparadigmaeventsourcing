@@ -11,6 +11,11 @@
 set -euo pipefail
 cd "$(dirname "$0")"
 
+# En Codespaces el daemon de Docker tarda unos segundos en arrancar.
+for _ in $(seq 1 30); do
+  if docker info > /dev/null 2>&1; then break; fi
+  sleep 2
+done
 if ! docker info > /dev/null 2>&1; then
   echo "Docker no está corriendo (o tu usuario no tiene permiso: prueba con sudo)." >&2
   exit 1
